@@ -113,7 +113,7 @@ Plan
 terraform plan -var-file=terraform.tfvars
 ```
 
-Apply
+Apply 
 
 ```
 terraform apply -var-file=terraform.tfvars
