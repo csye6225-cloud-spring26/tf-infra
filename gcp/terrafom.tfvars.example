@@ -1,0 +1,34 @@
+app_name       = "csye6225"
+env_name       = "dev"                                      # e.g., dev or demo
+gcp_project_id = "your-gcp-project-id"
+gcp_region     = "region-name"                              # e.g., us-east1
+gcp_zones      = [
+    "us-east1-b", 
+    "us-east1-c", 
+    "us-east1-d"
+] # Use zones in your selected region
+
+# Optional: create multiple VPCs in the same project/region
+# vpc_suffixes = ["a", "b"]
+
+# VPC CIDR for automatic subnet generation (if explicit CIDRs not provided)
+gcp_vpc_cidr = "10.0.0.0/16"
+
+# Explicit subnet CIDRs (if empty, auto-generated)
+public_subnet_cidrs  = [
+    "10.0.1.0/24", 
+    "10.0.2.0/24", 
+    "10.0.3.0/24"
+]
+
+private_subnet_cidrs = [
+    "10.0.101.0/24", 
+    "10.0.102.0/24", 
+    "10.0.103.0/24"
+]
+
+# Firewall configuration
+gcp_allowed_tcp_ports   = ["22","etc"]
+gcp_allow_source_ranges = ["0.0.0.0/0"]
+gcp_allow_target_tags   = ["web"]
+gcp_public_route_tags   = ["public"]
