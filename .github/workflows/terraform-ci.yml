@@ -30,10 +30,10 @@ jobs:
         run: terraform validate
 
     #   GCP validation steps to be enabled after GCP Terraform code is added
-    #   - name: Terraform Init (GCP)
-    #     working-directory: gcp
-    #     run: terraform init -backend=false
+      - name: Terraform Init (GCP)
+        working-directory: gcp
+        run: terraform init -backend=false
 
-    #   - name: Terraform Validate (GCP)
-    #     working-directory: gcp
-    #     run: terraform validate
+      - name: Terraform Validate (GCP)
+        working-directory: gcp
+        run: terraform validate
