@@ -40,6 +40,10 @@ locals {
   }
 }
 
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
+
 # VPC for the environment
 resource "aws_vpc" "csye6225_vpc" {
   cidr_block           = var.vpc_cidr
@@ -127,4 +131,102 @@ resource "aws_route_table_association" "csye6225_private_assoc" {
 
   subnet_id      = each.value.id
   route_table_id = aws_route_table.csye6225_private_rt.id
+}
+
+# ---------------------------------------------------------------------------
+# Data source: look up the most recent custom AMI built by Packer
+# ---------------------------------------------------------------------------
+data "aws_ami" "webapp_ami" {
+  most_recent = true
+
+  filter {
+    name   = "name"
+    values = [var.webapp_ami_name_filter]
+  }
+
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+
+  owners = [var.webapp_ami_owner]
+}
+
+# ---------------------------------------------------------------------------
+# Application Security Group
+# ---------------------------------------------------------------------------
+resource "aws_security_group" "app_sg" {
+  name        = "${local.name_prefix}-app-sg"
+  description = "Security group for web application EC2 instances"
+  vpc_id      = aws_vpc.csye6225_vpc.id
+
+  # SSH
+  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # HTTP
+  ingress {
+    description = "HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # HTTPS
+  ingress {
+    description = "HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Application port
+  ingress {
+    description = "Application port"
+    from_port   = var.webapp_port
+    to_port     = var.webapp_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Allow all outbound traffic
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-app-sg"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# EC2 Instance
+# ---------------------------------------------------------------------------
+resource "aws_instance" "webapp_instance" {
+  ami                     = var.webapp_ami_id != "" ? var.webapp_ami_id : data.aws_ami.webapp_ami.id
+  instance_type           = var.webapp_instance_type
+  subnet_id               = values(aws_subnet.csye6225_public_subnet)[0].id
+  key_name                = var.key_name
+  vpc_security_group_ids  = [aws_security_group.app_sg.id]
+  disable_api_termination = false
+
+  root_block_device {
+    volume_size           = var.webapp_root_volume_size
+    volume_type           = "gp2"
+    delete_on_termination = true
+  }
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp"
+  })
 }
