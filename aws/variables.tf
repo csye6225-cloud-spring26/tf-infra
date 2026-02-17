@@ -51,3 +51,48 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# ---------------------------------------------------------------------------
+# EC2 / AMI variables
+# ---------------------------------------------------------------------------
+
+variable "webapp_ami_name_filter" {
+  description = "Name filter pattern for the custom AMI (e.g., 'csye6225-*')."
+  type        = string
+  default     = "csye6225-*"
+}
+
+variable "webapp_ami_id" {
+  description = "Explicit AMI ID to use. When set, overrides the dynamic lookup. Leave empty to use the latest AMI matching the name filter."
+  type        = string
+  default     = ""
+}
+
+variable "webapp_ami_owner" {
+  description = "AWS account ID that owns the custom AMI. Use 'self' for the current account."
+  type        = string
+  default     = "self"
+}
+
+variable "webapp_instance_type" {
+  description = "EC2 instance type for the web application."
+  type        = string
+  default     = "t2.micro"
+}
+
+variable "webapp_root_volume_size" {
+  description = "Root EBS volume size in GB for the web application instance."
+  type        = number
+  default     = 25
+}
+
+variable "webapp_port" {
+  description = "TCP port the web application listens on."
+  type        = number
+  default     = 8080
+}
+
+variable "key_name" {
+  description = "Name of an existing AWS EC2 key pair for SSH access."
+  type        = string
+}
