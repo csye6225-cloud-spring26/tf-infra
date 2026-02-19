@@ -163,7 +163,7 @@ resource "google_compute_firewall" "deny_all" {
 data "google_compute_image" "webapp" {
   name    = var.webapp_image_name != "" ? var.webapp_image_name : null
   family  = var.webapp_image_name == "" ? var.webapp_image_family : null
-  project = var.gcp_project_id
+  project = var.webapp_image_project != "" ? var.webapp_image_project : var.gcp_project_id
 }
 
 # ---------------------------------------------------------------------------

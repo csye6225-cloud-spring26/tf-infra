@@ -117,6 +117,12 @@ variable "webapp_image_family" {
   default     = "csye6225-webapp"
 }
 
+variable "webapp_image_project" {
+  description = "GCP project ID where the webapp image is stored. Defaults to gcp_project_id if empty."
+  type        = string
+  default     = ""
+}
+
 variable "webapp_machine_type" {
   description = "Machine type for the Compute Engine instance."
   type        = string
