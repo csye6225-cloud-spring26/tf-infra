@@ -17,6 +17,9 @@ locals {
     for suffix in var.vpc_suffixes : "${local.name_prefix}-${suffix}"
   ] : [local.name_prefix]
 
+  # The primary VPC name (first VPC) — used for instance and firewall placement
+  primary_vpc_name = local.vpc_names[0]
+
   # Use explicit CIDRs if provided, otherwise auto-generate from VPC CIDR
   public_cidrs = length(var.public_subnet_cidrs) > 0 ? var.public_subnet_cidrs : [
     for idx in range(length(var.gcp_zones)) : cidrsubnet(var.gcp_vpc_cidr, var.subnet_newbits, idx)
@@ -56,7 +59,14 @@ locals {
 
   public_subnets  = { for subnet in local.public_subnet_defs : subnet.key => subnet }
   private_subnets = { for subnet in local.private_subnet_defs : subnet.key => subnet }
+
+  # Key for the first public subnet — used for instance placement (uses the first VPC's first public subnet)
+  first_public_subnet_key = "${local.primary_vpc_name}-public-0"
 }
+
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
 
 # Custom VPC with manual subnet control
 resource "google_compute_network" "csye6225_vpc" {
@@ -147,3 +157,57 @@ resource "google_compute_firewall" "deny_all" {
   }
 }
 
+# ---------------------------------------------------------------------------
+# Data source: look up the custom image built by Packer
+# ---------------------------------------------------------------------------
+data "google_compute_image" "webapp" {
+  name    = var.webapp_image_name != "" ? var.webapp_image_name : null
+  family  = var.webapp_image_name == "" ? var.webapp_image_family : null
+  project = var.gcp_project_id
+}
+
+# ---------------------------------------------------------------------------
+# Web Application Firewall Rule
+# ---------------------------------------------------------------------------
+resource "google_compute_firewall" "webapp" {
+  name    = "${local.name_prefix}-webapp-allow"
+  network = google_compute_network.csye6225_vpc[local.primary_vpc_name].id
+
+  direction     = "INGRESS"
+  priority      = var.gcp_allow_priority
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = [var.webapp_network_tag]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22", "80", "443", tostring(var.webapp_port)]
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Compute Engine Instance
+# ---------------------------------------------------------------------------
+resource "google_compute_instance" "webapp" {
+  name                = "${local.name_prefix}-webapp"
+  machine_type        = var.webapp_machine_type
+  zone                = var.gcp_zones[0]
+  deletion_protection = false
+  tags                = [var.webapp_network_tag]
+
+  boot_disk {
+    auto_delete = true
+    initialize_params {
+      image = data.google_compute_image.webapp.self_link
+      size  = var.webapp_boot_disk_size
+      type  = "pd-balanced"
+    }
+  }
+
+  network_interface {
+    network    = google_compute_network.csye6225_vpc[local.primary_vpc_name].id
+    subnetwork = google_compute_subnetwork.public[local.first_public_subnet_key].id
+
+    # Assign an ephemeral external IP
+    access_config {}
+  }
+}

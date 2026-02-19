@@ -100,3 +100,43 @@ variable "gcp_deny_priority" {
   type        = number
   default     = 65534
 }
+
+# ---------------------------------------------------------------------------
+# Compute Engine / Image variables
+# ---------------------------------------------------------------------------
+
+variable "webapp_image_name" {
+  description = "Explicit image name to use. When set, overrides the family-based lookup. Leave empty to use the latest image from the family."
+  type        = string
+  default     = ""
+}
+
+variable "webapp_image_family" {
+  description = "Image family name for the custom GCP image built by Packer. Only used when webapp_image_name is empty."
+  type        = string
+  default     = "csye6225-webapp"
+}
+
+variable "webapp_machine_type" {
+  description = "Machine type for the Compute Engine instance."
+  type        = string
+  default     = "e2-medium"
+}
+
+variable "webapp_boot_disk_size" {
+  description = "Boot disk size in GB."
+  type        = number
+  default     = 25
+}
+
+variable "webapp_network_tag" {
+  description = "Network tag applied to the webapp instance and used in firewall rules."
+  type        = string
+  default     = "webapp"
+}
+
+variable "webapp_port" {
+  description = "TCP port the web application listens on."
+  type        = number
+  default     = 8080
+}
