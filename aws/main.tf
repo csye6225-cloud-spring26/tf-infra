@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.0.0, < 7.0.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.0.0"
+    }
   }
 }
 
@@ -218,6 +222,7 @@ resource "aws_instance" "webapp_instance" {
   subnet_id               = values(aws_subnet.csye6225_public_subnet)[0].id
   key_name                = var.key_name
   vpc_security_group_ids  = [aws_security_group.app_sg.id]
+  iam_instance_profile    = aws_iam_instance_profile.webapp_instance_profile.name
   disable_api_termination = false
 
   root_block_device {
@@ -226,7 +231,248 @@ resource "aws_instance" "webapp_instance" {
     delete_on_termination = true
   }
 
+user_data = <<EOF
+#!/bin/bash
+set -e
+
+# -----------------------------------------------
+# Write .env file with RDS and S3 configuration
+# -----------------------------------------------
+cat > /opt/csye6225/.env <<ENVFILE
+DATABASE_URL=postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.csye6225_rds.address}:5432/${var.db_name}
+PORT=${var.webapp_port}
+NODE_ENV=production
+S3_BUCKET_NAME=${aws_s3_bucket.syllabus_bucket.id}
+AWS_REGION=${var.aws_region}
+ENVFILE
+
+# -----------------------------------------------
+# Set correct ownership (csye6225 user owns the app)
+# -----------------------------------------------
+chown csye6225:csye6225 /opt/csye6225/.env
+chmod 640 /opt/csye6225/.env
+
+# -----------------------------------------------
+# Restart the webapp service so it picks up the new .env
+# Prisma migrate deploy runs automatically via ExecStartPre
+# -----------------------------------------------
+systemctl daemon-reload
+systemctl restart webapp
+EOF
+
   tags = merge(var.tags, {
     Name = "${local.name_prefix}-webapp"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# S3 Bucket for Syllabus Files
+# ---------------------------------------------------------------------------
+
+# Generate a UUID for the bucket name (globally unique, no info leakage)
+resource "random_uuid" "s3_bucket_name" {}
+
+# The S3 bucket itself
+resource "aws_s3_bucket" "syllabus_bucket" {
+  bucket        = random_uuid.s3_bucket_name.result
+  force_destroy = true # Allows terraform destroy even if bucket has objects
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-syllabus-bucket"
+  })
+}
+
+# Block ALL public access — defense in depth
+resource "aws_s3_bucket_public_access_block" "syllabus_bucket_public_access" {
+  bucket = aws_s3_bucket.syllabus_bucket.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Default encryption — AES-256 (SSE-S3), AWS manages the keys
+resource "aws_s3_bucket_server_side_encryption_configuration" "syllabus_bucket_encryption" {
+  bucket = aws_s3_bucket.syllabus_bucket.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Lifecycle policy — transition to STANDARD_IA after 30 days to save costs
+resource "aws_s3_bucket_lifecycle_configuration" "syllabus_bucket_lifecycle" {
+  bucket = aws_s3_bucket.syllabus_bucket.id
+
+  rule {
+    id     = "transition-to-ia"
+    status = "Enabled"
+
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Database Security Group
+# ---------------------------------------------------------------------------
+resource "aws_security_group" "db_sg" {
+  name        = "${local.name_prefix}-db-sg"
+  description = "Security group for RDS instances only allows traffic from application SG"
+  vpc_id      = aws_vpc.csye6225_vpc.id
+
+  # Allow PostgreSQL traffic ONLY from the application security group
+  ingress {
+    description     = "PostgreSQL from application SG"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.app_sg.id] # <-- SG chaining, NOT a CIDR block
+  }
+
+  # No egress rule defined = no outbound traffic allowed by default
+  # (RDS doesn't need to initiate outbound connections)
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-db-sg"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# RDS Parameter Group
+# ---------------------------------------------------------------------------
+resource "aws_db_parameter_group" "csye6225_pg" {
+  name        = "${local.name_prefix}-pg"
+  family      = "postgres16" # Must match your RDS engine version
+  description = "Custom parameter group for CSYE6225 PostgreSQL RDS"
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-pg"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# RDS Subnet Group — tells RDS to place instances in private subnets
+# ---------------------------------------------------------------------------
+resource "aws_db_subnet_group" "csye6225_db_subnet_group" {
+  name        = "${local.name_prefix}-db-subnet-group"
+  description = "Private subnets for RDS instances"
+
+  # Collect all private subnet IDs into the group
+  subnet_ids = [for subnet in aws_subnet.csye6225_private_subnet : subnet.id]
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-db-subnet-group"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# RDS Instance
+# ---------------------------------------------------------------------------
+resource "aws_db_instance" "csye6225_rds" {
+  # Identity
+  identifier = "csye6225"
+  db_name    = var.db_name
+  
+  # Engine
+  engine         = "postgres"
+  engine_version = var.db_engine_version
+  instance_class = var.db_instance_class
+
+  # Credentials
+  username = var.db_username
+  password = var.db_password
+
+  # Storage
+  allocated_storage = 20
+  storage_type      = "gp2"
+
+  # Networking — private subnet, NOT publicly accessible
+  db_subnet_group_name   = aws_db_subnet_group.csye6225_db_subnet_group.name
+  vpc_security_group_ids = [aws_security_group.db_sg.id]
+  publicly_accessible    = false  # ⚠️ MUST be false — grading failure if true
+
+  # Configuration
+  parameter_group_name = aws_db_parameter_group.csye6225_pg.name
+  multi_az             = false
+
+  # Lifecycle — skip snapshot on destroy so terraform destroy works cleanly
+  skip_final_snapshot = true
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-rds"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# IAM Role for EC2 — allows the webapp to access AWS services
+# ---------------------------------------------------------------------------
+
+# Trust policy: allows EC2 service to assume this role
+resource "aws_iam_role" "webapp_role" {
+  name = "${local.name_prefix}-webapp-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-role"
+  })
+}
+
+# S3 policy: least privilege — only PutObject, GetObject, DeleteObject
+# scoped to ONLY our syllabus bucket
+resource "aws_iam_policy" "webapp_s3_policy" {
+  name        = "${local.name_prefix}-webapp-s3-policy"
+  description = "Allows webapp to put, get, and delete objects in the syllabus S3 bucket"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "${aws_s3_bucket.syllabus_bucket.arn}/*" # Only objects IN this bucket
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-s3-policy"
+  })
+}
+
+# Attach the S3 policy to the role
+resource "aws_iam_role_policy_attachment" "webapp_s3_attachment" {
+  role       = aws_iam_role.webapp_role.name
+  policy_arn = aws_iam_policy.webapp_s3_policy.arn
+}
+
+# Instance profile — the bridge between EC2 and the IAM role
+resource "aws_iam_instance_profile" "webapp_instance_profile" {
+  name = "${local.name_prefix}-webapp-instance-profile"
+  role = aws_iam_role.webapp_role.name
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-instance-profile"
   })
 }

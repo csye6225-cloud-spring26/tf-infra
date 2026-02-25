@@ -42,3 +42,38 @@ output "webapp_public_ip" {
   description = "Public IP address of the web application EC2 instance."
   value       = aws_instance.webapp_instance.public_ip
 }
+
+output "s3_bucket_name" {
+  description = "Name of the S3 bucket for syllabus files."
+  value       = aws_s3_bucket.syllabus_bucket.id
+}
+
+output "s3_bucket_arn" {
+  description = "ARN of the S3 bucket for syllabus files."
+  value       = aws_s3_bucket.syllabus_bucket.arn
+}
+
+output "db_security_group_id" {
+  description = "ID of the database security group."
+  value       = aws_security_group.db_sg.id
+}
+
+output "rds_endpoint" {
+  description = "Endpoint of the RDS instance (hostname:port)."
+  value       = aws_db_instance.csye6225_rds.endpoint
+}
+
+output "rds_hostname" {
+  description = "Hostname of the RDS instance."
+  value       = aws_db_instance.csye6225_rds.address
+}
+
+output "rds_port" {
+  description = "Port of the RDS instance."
+  value       = aws_db_instance.csye6225_rds.port
+}
+
+output "webapp_iam_role_arn" {
+  description = "ARN of the IAM role attached to the webapp EC2 instance."
+  value       = aws_iam_role.webapp_role.arn
+}
