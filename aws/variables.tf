@@ -96,3 +96,36 @@ variable "key_name" {
   description = "Name of an existing AWS EC2 key pair for SSH access."
   type        = string
 }
+
+# ---------------------------------------------------------------------------
+# RDS variables
+# ---------------------------------------------------------------------------
+variable "db_engine_version" {
+  description = "PostgreSQL engine version for RDS."
+  type        = string
+  default     = "16"
+}
+
+variable "db_instance_class" {
+  description = "RDS instance class."
+  type        = string
+  default     = "db.t3.micro"
+}
+
+variable "db_name" {
+  description = "Name of the database to create."
+  type        = string
+  default     = "csye6225"
+}
+
+variable "db_username" {
+  description = "Master username for the RDS instance."
+  type        = string
+  default     = "csye6225"
+}
+
+variable "db_password" {
+  description = "Master password for the RDS instance."
+  type        = string
+  sensitive   = true
+}
