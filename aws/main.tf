@@ -231,7 +231,7 @@ resource "aws_instance" "webapp_instance" {
     delete_on_termination = true
   }
 
-user_data = <<EOF
+  user_data = <<EOF
 #!/bin/bash
 set -e
 
@@ -378,7 +378,7 @@ resource "aws_db_instance" "csye6225_rds" {
   # Identity
   identifier = "csye6225"
   db_name    = var.db_name
-  
+
   # Engine
   engine         = "postgres"
   engine_version = var.db_engine_version
@@ -395,7 +395,7 @@ resource "aws_db_instance" "csye6225_rds" {
   # Networking — private subnet, NOT publicly accessible
   db_subnet_group_name   = aws_db_subnet_group.csye6225_db_subnet_group.name
   vpc_security_group_ids = [aws_security_group.db_sg.id]
-  publicly_accessible    = false  # ⚠️ MUST be false — grading failure if true
+  publicly_accessible    = false
 
   # Configuration
   parameter_group_name = aws_db_parameter_group.csye6225_pg.name
