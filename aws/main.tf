@@ -253,6 +253,22 @@ chown csye6225:csye6225 /opt/csye6225/.env
 chmod 640 /opt/csye6225/.env
 
 # -----------------------------------------------
+# Create log directory for the webapp
+# -----------------------------------------------
+mkdir -p /opt/csye6225/logs
+chown csye6225:csye6225 /opt/csye6225/logs
+chmod 755 /opt/csye6225/logs
+
+# -----------------------------------------------
+# Configure and start the CloudWatch Agent
+# -----------------------------------------------
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+  -s
+
+# -----------------------------------------------
 # Restart the webapp service so it picks up the new .env
 # Prisma migrate deploy runs automatically via ExecStartPre
 # -----------------------------------------------
