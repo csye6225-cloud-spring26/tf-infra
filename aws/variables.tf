@@ -129,3 +129,17 @@ variable "db_password" {
   type        = string
   sensitive   = true
 }
+
+# ---------------------------------------------------------------------------
+# DNS / Route 53 variables
+# ---------------------------------------------------------------------------
+variable "domain_name" {
+  description = "Fully qualified domain name for the environment (e.g., dev.srikanthsharma.me)."
+  type        = string
+}
+
+variable "zone_id" {
+  description = "Route 53 hosted zone ID. If empty, Terraform will look it up using domain_name."
+  type        = string
+  default     = ""
+}

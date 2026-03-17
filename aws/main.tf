@@ -476,3 +476,25 @@ resource "aws_iam_instance_profile" "webapp_instance_profile" {
     Name = "${local.name_prefix}-webapp-instance-profile"
   })
 }
+
+# ---------------------------------------------------------------------------
+# DNS — Route 53 A Record
+# ---------------------------------------------------------------------------
+
+# Optional data source: look up the zone by name if zone_id is not provided
+data "aws_route53_zone" "app_zone" {
+  count = var.zone_id == "" ? 1 : 0
+  name  = var.domain_name
+}
+
+locals {
+  resolved_zone_id = var.zone_id != "" ? var.zone_id : data.aws_route53_zone.app_zone[0].zone_id
+}
+
+resource "aws_route53_record" "webapp_a_record" {
+  zone_id = local.resolved_zone_id
+  name    = var.domain_name
+  type    = "A"
+  ttl     = 60
+  records = [aws_instance.webapp_instance.public_ip]
+}
