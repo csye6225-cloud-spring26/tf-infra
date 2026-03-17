@@ -467,6 +467,42 @@ resource "aws_iam_role_policy_attachment" "webapp_s3_attachment" {
   policy_arn = aws_iam_policy.webapp_s3_policy.arn
 }
 
+# ---------------------------------------------------------------------------
+# CloudWatch policy: allows the agent to push logs and custom metrics
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "webapp_cloudwatch_policy" {
+  name        = "${local.name_prefix}-webapp-cloudwatch-policy"
+  description = "Allows CloudWatch agent to push logs and custom metrics"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData",
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams",
+          "logs:DescribeLogGroups"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-cloudwatch-policy"
+  })
+}
+
+# Attach CloudWatch policy to the same webapp role
+resource "aws_iam_role_policy_attachment" "webapp_cloudwatch_attachment" {
+  role       = aws_iam_role.webapp_role.name
+  policy_arn = aws_iam_policy.webapp_cloudwatch_policy.arn
+}
+
 # Instance profile — the bridge between EC2 and the IAM role
 resource "aws_iam_instance_profile" "webapp_instance_profile" {
   name = "${local.name_prefix}-webapp-instance-profile"
