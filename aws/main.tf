@@ -244,6 +244,8 @@ PORT=${var.webapp_port}
 NODE_ENV=production
 S3_BUCKET_NAME=${aws_s3_bucket.syllabus_bucket.id}
 AWS_REGION=${var.aws_region}
+STATSD_HOST=localhost
+STATSD_PORT=${var.statsd_port}
 ENVFILE
 
 # -----------------------------------------------
@@ -260,6 +262,42 @@ chown csye6225:csye6225 /opt/csye6225/logs
 chmod 755 /opt/csye6225/logs
 
 # -----------------------------------------------
+# Write CloudWatch Agent configuration at boot time
+# -----------------------------------------------
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<CWCONFIG
+{
+  "agent": {
+    "metrics_collection_interval": 10,
+    "logfile": "/opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/opt/csye6225/logs/webapp.log",
+            "log_group_name": "${local.name_prefix}-webapp",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 7
+          }
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "namespace": "${local.name_prefix}-webapp",
+    "metrics_collected": {
+      "statsd": {
+        "service_address": ":${var.statsd_port}",
+        "metrics_collection_interval": 10,
+        "metrics_aggregation_interval": 10
+      }
+    }
+  }
+}
+CWCONFIG
+
+# -----------------------------------------------
 # Configure and start the CloudWatch Agent
 # -----------------------------------------------
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
@@ -269,8 +307,7 @@ chmod 755 /opt/csye6225/logs
   -s
 
 # -----------------------------------------------
-# Restart the webapp service so it picks up the new .env
-# Prisma migrate deploy runs automatically via ExecStartPre
+# Restart the webapp service
 # -----------------------------------------------
 systemctl daemon-reload
 systemctl restart webapp

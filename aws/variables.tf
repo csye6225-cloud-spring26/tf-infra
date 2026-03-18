@@ -92,6 +92,12 @@ variable "webapp_port" {
   default     = 8080
 }
 
+variable "statsd_port" {
+  description = "UDP port used by StatsD for custom metrics ingestion."
+  type        = number
+  default     = 8125
+}
+
 variable "key_name" {
   description = "Name of an existing AWS EC2 key pair for SSH access."
   type        = string
