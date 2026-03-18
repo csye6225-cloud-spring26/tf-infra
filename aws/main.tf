@@ -244,6 +244,8 @@ PORT=${var.webapp_port}
 NODE_ENV=production
 S3_BUCKET_NAME=${aws_s3_bucket.syllabus_bucket.id}
 AWS_REGION=${var.aws_region}
+STATSD_HOST=localhost
+STATSD_PORT=${var.statsd_port}
 ENVFILE
 
 # -----------------------------------------------
@@ -253,8 +255,59 @@ chown csye6225:csye6225 /opt/csye6225/.env
 chmod 640 /opt/csye6225/.env
 
 # -----------------------------------------------
-# Restart the webapp service so it picks up the new .env
-# Prisma migrate deploy runs automatically via ExecStartPre
+# Create log directory for the webapp
+# -----------------------------------------------
+mkdir -p /opt/csye6225/logs
+chown csye6225:csye6225 /opt/csye6225/logs
+chmod 755 /opt/csye6225/logs
+
+# -----------------------------------------------
+# Write CloudWatch Agent configuration at boot time
+# -----------------------------------------------
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<CWCONFIG
+{
+  "agent": {
+    "metrics_collection_interval": 10,
+    "logfile": "/opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/opt/csye6225/logs/webapp.log",
+            "log_group_name": "${local.name_prefix}-webapp",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 7
+          }
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "namespace": "${local.name_prefix}-webapp",
+    "metrics_collected": {
+      "statsd": {
+        "service_address": ":${var.statsd_port}",
+        "metrics_collection_interval": 10,
+        "metrics_aggregation_interval": 10
+      }
+    }
+  }
+}
+CWCONFIG
+
+# -----------------------------------------------
+# Configure and start the CloudWatch Agent
+# -----------------------------------------------
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+  -s
+
+# -----------------------------------------------
+# Restart the webapp service
 # -----------------------------------------------
 systemctl daemon-reload
 systemctl restart webapp
@@ -467,6 +520,42 @@ resource "aws_iam_role_policy_attachment" "webapp_s3_attachment" {
   policy_arn = aws_iam_policy.webapp_s3_policy.arn
 }
 
+# ---------------------------------------------------------------------------
+# CloudWatch policy: allows the agent to push logs and custom metrics
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "webapp_cloudwatch_policy" {
+  name        = "${local.name_prefix}-webapp-cloudwatch-policy"
+  description = "Allows CloudWatch agent to push logs and custom metrics"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData",
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams",
+          "logs:DescribeLogGroups"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-cloudwatch-policy"
+  })
+}
+
+# Attach CloudWatch policy to the same webapp role
+resource "aws_iam_role_policy_attachment" "webapp_cloudwatch_attachment" {
+  role       = aws_iam_role.webapp_role.name
+  policy_arn = aws_iam_policy.webapp_cloudwatch_policy.arn
+}
+
 # Instance profile — the bridge between EC2 and the IAM role
 resource "aws_iam_instance_profile" "webapp_instance_profile" {
   name = "${local.name_prefix}-webapp-instance-profile"
@@ -475,4 +564,26 @@ resource "aws_iam_instance_profile" "webapp_instance_profile" {
   tags = merge(var.tags, {
     Name = "${local.name_prefix}-webapp-instance-profile"
   })
+}
+
+# ---------------------------------------------------------------------------
+# DNS — Route 53 A Record
+# ---------------------------------------------------------------------------
+
+# Optional data source: look up the zone by name if zone_id is not provided
+data "aws_route53_zone" "app_zone" {
+  count = var.zone_id == "" ? 1 : 0
+  name  = var.domain_name
+}
+
+locals {
+  resolved_zone_id = var.zone_id != "" ? var.zone_id : data.aws_route53_zone.app_zone[0].zone_id
+}
+
+resource "aws_route53_record" "webapp_a_record" {
+  zone_id = local.resolved_zone_id
+  name    = var.domain_name
+  type    = "A"
+  ttl     = 60
+  records = [aws_instance.webapp_instance.public_ip]
 }

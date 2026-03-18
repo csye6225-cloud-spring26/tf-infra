@@ -92,6 +92,12 @@ variable "webapp_port" {
   default     = 8080
 }
 
+variable "statsd_port" {
+  description = "UDP port used by StatsD for custom metrics ingestion."
+  type        = number
+  default     = 8125
+}
+
 variable "key_name" {
   description = "Name of an existing AWS EC2 key pair for SSH access."
   type        = string
@@ -128,4 +134,18 @@ variable "db_password" {
   description = "Master password for the RDS instance."
   type        = string
   sensitive   = true
+}
+
+# ---------------------------------------------------------------------------
+# DNS / Route 53 variables
+# ---------------------------------------------------------------------------
+variable "domain_name" {
+  description = "Fully qualified domain name for the environment (e.g., dev.srikanthsharma.me)."
+  type        = string
+}
+
+variable "zone_id" {
+  description = "Route 53 hosted zone ID. If empty, Terraform will look it up using domain_name."
+  type        = string
+  default     = ""
 }
