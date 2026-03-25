@@ -778,6 +778,10 @@ resource "aws_route53_record" "webapp_a_record" {
   zone_id = local.resolved_zone_id
   name    = var.domain_name
   type    = "A"
-  ttl     = 60
-  records = [aws_instance.webapp_instance.public_ip]
+
+  alias {
+    name                   = aws_lb.webapp_alb.dns_name
+    zone_id                = aws_lb.webapp_alb.zone_id
+    evaluate_target_health = true
+  }
 }
