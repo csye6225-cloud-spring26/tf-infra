@@ -157,23 +157,14 @@ data "aws_ami" "webapp_ami" {
 }
 
 # ---------------------------------------------------------------------------
-# Application Security Group
+# Load Balancer Security Group
 # ---------------------------------------------------------------------------
-resource "aws_security_group" "app_sg" {
-  name        = "${local.name_prefix}-app-sg"
-  description = "Security group for web application EC2 instances"
+resource "aws_security_group" "lb_sg" {
+  name        = "${local.name_prefix}-lb-sg"
+  description = "Security group for the Application Load Balancer"
   vpc_id      = aws_vpc.csye6225_vpc.id
 
-  # SSH
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # HTTP
+  # HTTP from anywhere
   ingress {
     description = "HTTP"
     from_port   = 80
@@ -182,7 +173,7 @@ resource "aws_security_group" "app_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # HTTPS
+  # HTTPS from anywhere
   ingress {
     description = "HTTPS"
     from_port   = 443
@@ -191,13 +182,43 @@ resource "aws_security_group" "app_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Application port
+  # Allow all outbound (needed to forward traffic to app instances)
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-lb-sg"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Application Security Group (traffic only from LB + SSH)
+# ---------------------------------------------------------------------------
+resource "aws_security_group" "app_sg" {
+  name        = "${local.name_prefix}-app-sg"
+  description = "Security group for web application EC2 instances"
+  vpc_id      = aws_vpc.csye6225_vpc.id
+
+  # SSH from anywhere (for debugging/access)
   ingress {
-    description = "Application port"
-    from_port   = var.webapp_port
-    to_port     = var.webapp_port
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Application port — ONLY from the load balancer security group
+  ingress {
+    description     = "App traffic from load balancer"
+    from_port       = var.webapp_port
+    to_port         = var.webapp_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lb_sg.id]
   }
 
   # Allow all outbound traffic
@@ -214,7 +235,63 @@ resource "aws_security_group" "app_sg" {
 }
 
 # ---------------------------------------------------------------------------
-# EC2 Instance
+# Application Load Balancer
+# ---------------------------------------------------------------------------
+resource "aws_lb" "webapp_alb" {
+  name               = "${local.name_prefix}-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.lb_sg.id]
+  subnets            = [for subnet in aws_subnet.csye6225_public_subnet : subnet.id]
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-alb"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Target Group — where the ALB forwards traffic
+# ---------------------------------------------------------------------------
+resource "aws_lb_target_group" "webapp_tg" {
+  name     = "${local.name_prefix}-tg"
+  port     = var.webapp_port
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.csye6225_vpc.id
+
+  health_check {
+    enabled             = true
+    path                = "/health"
+    port                = tostring(var.webapp_port)
+    protocol            = "HTTP"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 10
+    matcher             = "200"
+  }
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-tg"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Listener — HTTP on port 80 → forward to target group
+# ---------------------------------------------------------------------------
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.webapp_alb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.webapp_tg.arn
+  }
+}
+
+
+# ---------------------------------------------------------------------------
+# Launch Template — defines how to launch EC2 instances for the webapp
 # ---------------------------------------------------------------------------
 resource "aws_instance" "webapp_instance" {
   ami                     = var.webapp_ami_id != "" ? var.webapp_ami_id : data.aws_ami.webapp_ami.id
