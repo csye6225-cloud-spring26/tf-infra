@@ -293,22 +293,32 @@ resource "aws_lb_listener" "http" {
 # ---------------------------------------------------------------------------
 # Launch Template — defines how to launch EC2 instances for the webapp
 # ---------------------------------------------------------------------------
-resource "aws_instance" "webapp_instance" {
-  ami                     = var.webapp_ami_id != "" ? var.webapp_ami_id : data.aws_ami.webapp_ami.id
-  instance_type           = var.webapp_instance_type
-  subnet_id               = values(aws_subnet.csye6225_public_subnet)[0].id
-  key_name                = var.key_name
-  vpc_security_group_ids  = [aws_security_group.app_sg.id]
-  iam_instance_profile    = aws_iam_instance_profile.webapp_instance_profile.name
-  disable_api_termination = false
+resource "aws_launch_template" "webapp_lt" {
+  name          = "csye6225_asg"
+  image_id      = var.webapp_ami_id != "" ? var.webapp_ami_id : data.aws_ami.webapp_ami.id
+  instance_type = var.webapp_instance_type
+  key_name      = var.key_name
 
-  root_block_device {
-    volume_size           = var.webapp_root_volume_size
-    volume_type           = "gp2"
-    delete_on_termination = true
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [aws_security_group.app_sg.id]
   }
 
-  user_data = <<EOF
+  iam_instance_profile {
+    name = aws_iam_instance_profile.webapp_instance_profile.name
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+
+    ebs {
+      volume_size           = var.webapp_root_volume_size
+      volume_type           = "gp2"
+      delete_on_termination = true
+    }
+  }
+
+  user_data = base64encode(<<EOF
 #!/bin/bash
 set -e
 
@@ -389,9 +399,18 @@ CWCONFIG
 systemctl daemon-reload
 systemctl restart webapp
 EOF
+  )
+
+  tag_specifications {
+    resource_type = "instance"
+
+    tags = merge(var.tags, {
+      Name = "${local.name_prefix}-webapp"
+    })
+  }
 
   tags = merge(var.tags, {
-    Name = "${local.name_prefix}-webapp"
+    Name = "${local.name_prefix}-launch-template"
   })
 }
 
