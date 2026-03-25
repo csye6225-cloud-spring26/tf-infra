@@ -415,6 +415,104 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Auto Scaling Group
+# ---------------------------------------------------------------------------
+resource "aws_autoscaling_group" "webapp_asg" {
+  name                = "${local.name_prefix}-asg"
+  min_size            = 3
+  max_size            = 5
+  desired_capacity    = 1
+  default_cooldown    = 60
+  health_check_type   = "ELB"
+  health_check_grace_period = 120
+  vpc_zone_identifier = [for subnet in aws_subnet.csye6225_public_subnet : subnet.id]
+  target_group_arns   = [aws_lb_target_group.webapp_tg.arn]
+
+  launch_template {
+    id      = aws_launch_template.webapp_lt.id
+    version = "$Latest"
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "${local.name_prefix}-webapp"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Environment"
+    value               = var.env_name
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Owner"
+    value               = var.app_name
+    propagate_at_launch = true
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Scale Up Policy — add 1 instance when CPU > 5%
+# ---------------------------------------------------------------------------
+resource "aws_autoscaling_policy" "scale_up" {
+  name                   = "${local.name_prefix}-scale-up"
+  autoscaling_group_name = aws_autoscaling_group.webapp_asg.name
+  adjustment_type        = "ChangeInCapacity"
+  scaling_adjustment     = 1
+  cooldown               = 60
+  policy_type            = "SimpleScaling"
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_high" {
+  alarm_name          = "${local.name_prefix}-cpu-high"
+  alarm_description   = "Scale up when average CPU > 5%"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 5
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.webapp_asg.name
+  }
+
+  alarm_actions = [aws_autoscaling_policy.scale_up.arn]
+}
+
+# ---------------------------------------------------------------------------
+# Scale Down Policy — remove 1 instance when CPU < 3% 
+# ---------------------------------------------------------------------------
+resource "aws_autoscaling_policy" "scale_down" {
+  name                   = "${local.name_prefix}-scale-down"
+  autoscaling_group_name = aws_autoscaling_group.webapp_asg.name
+  adjustment_type        = "ChangeInCapacity"
+  scaling_adjustment     = -1
+  cooldown               = 60
+  policy_type            = "SimpleScaling"
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_low" {
+  alarm_name          = "${local.name_prefix}-cpu-low"
+  alarm_description   = "Scale down when average CPU < 3%"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 3
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.webapp_asg.name
+  }
+
+  alarm_actions = [aws_autoscaling_policy.scale_down.arn]
+}
+
+# ---------------------------------------------------------------------------
 # S3 Bucket for Syllabus Files
 # ---------------------------------------------------------------------------
 
