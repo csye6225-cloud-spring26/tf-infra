@@ -421,7 +421,7 @@ resource "aws_autoscaling_group" "webapp_asg" {
   name                = "${local.name_prefix}-asg"
   min_size            = 3
   max_size            = 5
-  desired_capacity    = 1
+  desired_capacity    = 3
   default_cooldown    = 60
   health_check_type   = "ELB"
   health_check_grace_period = 120
@@ -516,7 +516,7 @@ resource "aws_cloudwatch_metric_alarm" "cpu_low" {
 # S3 Bucket for Syllabus Files
 # ---------------------------------------------------------------------------
 
-# Generate a UUID for the bucket name (globally unique, no info leakage)
+# Generate a UUID for the bucket name
 resource "random_uuid" "s3_bucket_name" {}
 
 # The S3 bucket itself
