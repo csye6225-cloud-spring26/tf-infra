@@ -157,23 +157,14 @@ data "aws_ami" "webapp_ami" {
 }
 
 # ---------------------------------------------------------------------------
-# Application Security Group
+# Load Balancer Security Group
 # ---------------------------------------------------------------------------
-resource "aws_security_group" "app_sg" {
-  name        = "${local.name_prefix}-app-sg"
-  description = "Security group for web application EC2 instances"
+resource "aws_security_group" "lb_sg" {
+  name        = "${local.name_prefix}-lb-sg"
+  description = "Security group for the Application Load Balancer"
   vpc_id      = aws_vpc.csye6225_vpc.id
 
-  # SSH
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # HTTP
+  # HTTP from anywhere
   ingress {
     description = "HTTP"
     from_port   = 80
@@ -182,7 +173,7 @@ resource "aws_security_group" "app_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # HTTPS
+  # HTTPS from anywhere
   ingress {
     description = "HTTPS"
     from_port   = 443
@@ -191,13 +182,43 @@ resource "aws_security_group" "app_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Application port
+  # Allow all outbound (needed to forward traffic to app instances)
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-lb-sg"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Application Security Group (traffic only from LB + SSH)
+# ---------------------------------------------------------------------------
+resource "aws_security_group" "app_sg" {
+  name        = "${local.name_prefix}-app-sg"
+  description = "Security group for web application EC2 instances"
+  vpc_id      = aws_vpc.csye6225_vpc.id
+
+  # SSH from anywhere (for debugging/access)
   ingress {
-    description = "Application port"
-    from_port   = var.webapp_port
-    to_port     = var.webapp_port
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Application port — ONLY from the load balancer security group
+  ingress {
+    description     = "App traffic from load balancer"
+    from_port       = var.webapp_port
+    to_port         = var.webapp_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lb_sg.id]
   }
 
   # Allow all outbound traffic
@@ -214,24 +235,90 @@ resource "aws_security_group" "app_sg" {
 }
 
 # ---------------------------------------------------------------------------
-# EC2 Instance
+# Application Load Balancer
 # ---------------------------------------------------------------------------
-resource "aws_instance" "webapp_instance" {
-  ami                     = var.webapp_ami_id != "" ? var.webapp_ami_id : data.aws_ami.webapp_ami.id
-  instance_type           = var.webapp_instance_type
-  subnet_id               = values(aws_subnet.csye6225_public_subnet)[0].id
-  key_name                = var.key_name
-  vpc_security_group_ids  = [aws_security_group.app_sg.id]
-  iam_instance_profile    = aws_iam_instance_profile.webapp_instance_profile.name
-  disable_api_termination = false
+resource "aws_lb" "webapp_alb" {
+  name               = "${local.name_prefix}-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.lb_sg.id]
+  subnets            = [for subnet in aws_subnet.csye6225_public_subnet : subnet.id]
 
-  root_block_device {
-    volume_size           = var.webapp_root_volume_size
-    volume_type           = "gp2"
-    delete_on_termination = true
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-alb"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Target Group — where the ALB forwards traffic
+# ---------------------------------------------------------------------------
+resource "aws_lb_target_group" "webapp_tg" {
+  name     = "${local.name_prefix}-tg"
+  port     = var.webapp_port
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.csye6225_vpc.id
+
+  health_check {
+    enabled             = true
+    path                = "/health"
+    port                = tostring(var.webapp_port)
+    protocol            = "HTTP"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 10
+    matcher             = "200"
   }
 
-  user_data = <<EOF
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-tg"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Listener — HTTP on port 80 → forward to target group
+# ---------------------------------------------------------------------------
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.webapp_alb.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.webapp_tg.arn
+  }
+}
+
+
+# ---------------------------------------------------------------------------
+# Launch Template — defines how to launch EC2 instances for the webapp
+# ---------------------------------------------------------------------------
+resource "aws_launch_template" "webapp_lt" {
+  name          = "csye6225_asg"
+  image_id      = var.webapp_ami_id != "" ? var.webapp_ami_id : data.aws_ami.webapp_ami.id
+  instance_type = var.webapp_instance_type
+  key_name      = var.key_name
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [aws_security_group.app_sg.id]
+  }
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.webapp_instance_profile.name
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+
+    ebs {
+      volume_size           = var.webapp_root_volume_size
+      volume_type           = "gp2"
+      delete_on_termination = true
+    }
+  }
+
+  user_data = base64encode(<<EOF
 #!/bin/bash
 set -e
 
@@ -312,17 +399,124 @@ CWCONFIG
 systemctl daemon-reload
 systemctl restart webapp
 EOF
+  )
+
+  tag_specifications {
+    resource_type = "instance"
+
+    tags = merge(var.tags, {
+      Name = "${local.name_prefix}-webapp"
+    })
+  }
 
   tags = merge(var.tags, {
-    Name = "${local.name_prefix}-webapp"
+    Name = "${local.name_prefix}-launch-template"
   })
+}
+
+# ---------------------------------------------------------------------------
+# Auto Scaling Group
+# ---------------------------------------------------------------------------
+resource "aws_autoscaling_group" "webapp_asg" {
+  name                      = "${local.name_prefix}-asg"
+  min_size                  = 2
+  max_size                  = 6
+  desired_capacity          = 2
+  default_cooldown          = 60
+  health_check_type         = "ELB"
+  health_check_grace_period = 120
+  vpc_zone_identifier       = [for subnet in aws_subnet.csye6225_public_subnet : subnet.id]
+  target_group_arns         = [aws_lb_target_group.webapp_tg.arn]
+
+  launch_template {
+    id      = aws_launch_template.webapp_lt.id
+    version = "$Latest"
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "${local.name_prefix}-webapp"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Environment"
+    value               = var.env_name
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Owner"
+    value               = var.app_name
+    propagate_at_launch = true
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Scale Up Policy — add 1 instance when CPU > 8%
+# ---------------------------------------------------------------------------
+resource "aws_autoscaling_policy" "scale_up" {
+  name                   = "${local.name_prefix}-scale-up"
+  autoscaling_group_name = aws_autoscaling_group.webapp_asg.name
+  adjustment_type        = "ChangeInCapacity"
+  scaling_adjustment     = 1
+  cooldown               = 60
+  policy_type            = "SimpleScaling"
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_high" {
+  alarm_name          = "${local.name_prefix}-cpu-high"
+  alarm_description   = "Scale up when average CPU > 8%"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 8
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.webapp_asg.name
+  }
+
+  alarm_actions = [aws_autoscaling_policy.scale_up.arn]
+}
+
+# ---------------------------------------------------------------------------
+# Scale Down Policy — remove 1 instance when CPU < 5%
+# ---------------------------------------------------------------------------
+resource "aws_autoscaling_policy" "scale_down" {
+  name                   = "${local.name_prefix}-scale-down"
+  autoscaling_group_name = aws_autoscaling_group.webapp_asg.name
+  adjustment_type        = "ChangeInCapacity"
+  scaling_adjustment     = -1
+  cooldown               = 60
+  policy_type            = "SimpleScaling"
+}
+
+resource "aws_cloudwatch_metric_alarm" "cpu_low" {
+  alarm_name          = "${local.name_prefix}-cpu-low"
+  alarm_description   = "Scale down when average CPU < 5%"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 5
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.webapp_asg.name
+  }
+
+  alarm_actions = [aws_autoscaling_policy.scale_down.arn]
 }
 
 # ---------------------------------------------------------------------------
 # S3 Bucket for Syllabus Files
 # ---------------------------------------------------------------------------
 
-# Generate a UUID for the bucket name (globally unique, no info leakage)
+# Generate a UUID for the bucket name
 resource "random_uuid" "s3_bucket_name" {}
 
 # The S3 bucket itself
@@ -584,6 +778,10 @@ resource "aws_route53_record" "webapp_a_record" {
   zone_id = local.resolved_zone_id
   name    = var.domain_name
   type    = "A"
-  ttl     = 60
-  records = [aws_instance.webapp_instance.public_ip]
+
+  alias {
+    name                   = aws_lb.webapp_alb.dns_name
+    zone_id                = aws_lb.webapp_alb.zone_id
+    evaluate_target_health = true
+  }
 }

@@ -1,15 +1,18 @@
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
 output "vpc_id" {
   description = "ID of the VPC."
   value       = aws_vpc.csye6225_vpc.id
 }
 
 output "public_subnet_ids" {
-  description = "IDs of public subnets."
+  description = "IDs of the public subnets."
   value       = [for subnet in aws_subnet.csye6225_public_subnet : subnet.id]
 }
 
 output "private_subnet_ids" {
-  description = "IDs of private subnets."
+  description = "IDs of the private subnets."
   value       = [for subnet in aws_subnet.csye6225_private_subnet : subnet.id]
 }
 
@@ -28,29 +31,17 @@ output "private_route_table_id" {
   value       = aws_route_table.csye6225_private_rt.id
 }
 
+# ---------------------------------------------------------------------------
+# Security Groups
+# ---------------------------------------------------------------------------
+output "lb_security_group_id" {
+  description = "ID of the load balancer security group."
+  value       = aws_security_group.lb_sg.id
+}
+
 output "app_security_group_id" {
   description = "ID of the application security group."
   value       = aws_security_group.app_sg.id
-}
-
-output "webapp_instance_id" {
-  description = "ID of the web application EC2 instance."
-  value       = aws_instance.webapp_instance.id
-}
-
-output "webapp_public_ip" {
-  description = "Public IP address of the web application EC2 instance."
-  value       = aws_instance.webapp_instance.public_ip
-}
-
-output "s3_bucket_name" {
-  description = "Name of the S3 bucket for syllabus files."
-  value       = aws_s3_bucket.syllabus_bucket.id
-}
-
-output "s3_bucket_arn" {
-  description = "ARN of the S3 bucket for syllabus files."
-  value       = aws_s3_bucket.syllabus_bucket.arn
 }
 
 output "db_security_group_id" {
@@ -58,6 +49,35 @@ output "db_security_group_id" {
   value       = aws_security_group.db_sg.id
 }
 
+# ---------------------------------------------------------------------------
+# Load Balancer
+# ---------------------------------------------------------------------------
+output "alb_dns_name" {
+  description = "DNS name of the Application Load Balancer."
+  value       = aws_lb.webapp_alb.dns_name
+}
+
+output "alb_zone_id" {
+  description = "Zone ID of the Application Load Balancer."
+  value       = aws_lb.webapp_alb.zone_id
+}
+
+# ---------------------------------------------------------------------------
+# Auto Scaling
+# ---------------------------------------------------------------------------
+output "asg_name" {
+  description = "Name of the Auto Scaling Group."
+  value       = aws_autoscaling_group.webapp_asg.name
+}
+
+output "launch_template_id" {
+  description = "ID of the launch template."
+  value       = aws_launch_template.webapp_lt.id
+}
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
 output "rds_endpoint" {
   description = "Endpoint of the RDS instance (hostname:port)."
   value       = aws_db_instance.csye6225_rds.endpoint
@@ -73,6 +93,30 @@ output "rds_port" {
   value       = aws_db_instance.csye6225_rds.port
 }
 
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+output "s3_bucket_name" {
+  description = "Name of the S3 bucket for syllabus files."
+  value       = aws_s3_bucket.syllabus_bucket.id
+}
+
+output "s3_bucket_arn" {
+  description = "ARN of the S3 bucket for syllabus files."
+  value       = aws_s3_bucket.syllabus_bucket.arn
+}
+
+# ---------------------------------------------------------------------------
+# DNS
+# ---------------------------------------------------------------------------
+output "webapp_url" {
+  description = "URL to access the web application."
+  value       = "http://${var.domain_name}"
+}
+
+# ---------------------------------------------------------------------------
+# IAM
+# ---------------------------------------------------------------------------
 output "webapp_iam_role_arn" {
   description = "ARN of the IAM role attached to the webapp EC2 instance."
   value       = aws_iam_role.webapp_role.arn
