@@ -418,15 +418,15 @@ EOF
 # Auto Scaling Group
 # ---------------------------------------------------------------------------
 resource "aws_autoscaling_group" "webapp_asg" {
-  name                = "${local.name_prefix}-asg"
-  min_size            = 2
-  max_size            = 6
-  desired_capacity    = 2
-  default_cooldown    = 60
-  health_check_type   = "ELB"
+  name                      = "${local.name_prefix}-asg"
+  min_size                  = 2
+  max_size                  = 6
+  desired_capacity          = 2
+  default_cooldown          = 60
+  health_check_type         = "ELB"
   health_check_grace_period = 120
-  vpc_zone_identifier = [for subnet in aws_subnet.csye6225_public_subnet : subnet.id]
-  target_group_arns   = [aws_lb_target_group.webapp_tg.arn]
+  vpc_zone_identifier       = [for subnet in aws_subnet.csye6225_public_subnet : subnet.id]
+  target_group_arns         = [aws_lb_target_group.webapp_tg.arn]
 
   launch_template {
     id      = aws_launch_template.webapp_lt.id
