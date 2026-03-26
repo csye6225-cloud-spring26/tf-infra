@@ -419,9 +419,9 @@ EOF
 # ---------------------------------------------------------------------------
 resource "aws_autoscaling_group" "webapp_asg" {
   name                = "${local.name_prefix}-asg"
-  min_size            = 3
-  max_size            = 5
-  desired_capacity    = 3
+  min_size            = 2
+  max_size            = 6
+  desired_capacity    = 2
   default_cooldown    = 60
   health_check_type   = "ELB"
   health_check_grace_period = 120
@@ -453,7 +453,7 @@ resource "aws_autoscaling_group" "webapp_asg" {
 }
 
 # ---------------------------------------------------------------------------
-# Scale Up Policy — add 1 instance when CPU > 5%
+# Scale Up Policy — add 1 instance when CPU > 8%
 # ---------------------------------------------------------------------------
 resource "aws_autoscaling_policy" "scale_up" {
   name                   = "${local.name_prefix}-scale-up"
@@ -466,14 +466,14 @@ resource "aws_autoscaling_policy" "scale_up" {
 
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   alarm_name          = "${local.name_prefix}-cpu-high"
-  alarm_description   = "Scale up when average CPU > 5%"
+  alarm_description   = "Scale up when average CPU > 8%"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
   period              = 60
   statistic           = "Average"
-  threshold           = 5
+  threshold           = 8
 
   dimensions = {
     AutoScalingGroupName = aws_autoscaling_group.webapp_asg.name
@@ -483,7 +483,7 @@ resource "aws_cloudwatch_metric_alarm" "cpu_high" {
 }
 
 # ---------------------------------------------------------------------------
-# Scale Down Policy — remove 1 instance when CPU < 3% 
+# Scale Down Policy — remove 1 instance when CPU < 5%
 # ---------------------------------------------------------------------------
 resource "aws_autoscaling_policy" "scale_down" {
   name                   = "${local.name_prefix}-scale-down"
@@ -496,14 +496,14 @@ resource "aws_autoscaling_policy" "scale_down" {
 
 resource "aws_cloudwatch_metric_alarm" "cpu_low" {
   alarm_name          = "${local.name_prefix}-cpu-low"
-  alarm_description   = "Scale down when average CPU < 3%"
+  alarm_description   = "Scale down when average CPU < 5%"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 1
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
   period              = 60
   statistic           = "Average"
-  threshold           = 3
+  threshold           = 5
 
   dimensions = {
     AutoScalingGroupName = aws_autoscaling_group.webapp_asg.name
