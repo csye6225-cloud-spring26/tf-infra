@@ -149,3 +149,23 @@ variable "zone_id" {
   type        = string
   default     = ""
 }
+
+# ---------------------------------------------------------------------------
+# Lambda / Email variables
+# ---------------------------------------------------------------------------
+variable "lambda_zip_path" {
+  description = "Path to the Lambda function deployment package (ZIP file)."
+  type        = string
+  default     = "serverless.zip"
+}
+
+variable "mailgun_api_key" {
+  description = "Mailgun API key for sending verification emails."
+  type        = string
+  sensitive   = true
+}
+
+variable "mailgun_domain" {
+  description = "Mailgun sending domain (e.g., srikanthsharma.me)."
+  type        = string
+}

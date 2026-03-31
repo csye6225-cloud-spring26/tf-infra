@@ -333,6 +333,7 @@ S3_BUCKET_NAME=${aws_s3_bucket.syllabus_bucket.id}
 AWS_REGION=${var.aws_region}
 STATSD_HOST=localhost
 STATSD_PORT=${var.statsd_port}
+SNS_TOPIC_ARN=${aws_sns_topic.user_signup.arn}
 ENVFILE
 
 # -----------------------------------------------
@@ -908,4 +909,49 @@ resource "aws_iam_policy" "webapp_sns_policy" {
 resource "aws_iam_role_policy_attachment" "webapp_sns_attachment" {
   role       = aws_iam_role.webapp_role.name
   policy_arn = aws_iam_policy.webapp_sns_policy.arn
+}
+
+# ---------------------------------------------------------------------------
+# Lambda Function — sends verification email on SNS trigger
+# ---------------------------------------------------------------------------
+resource "aws_lambda_function" "email_verification" {
+  function_name = "${local.name_prefix}-email-verification"
+  role          = aws_iam_role.lambda_role.arn
+  handler       = "index.handler"
+  runtime       = "nodejs20.x"
+  timeout       = 30
+  filename      = var.lambda_zip_path
+
+  environment {
+    variables = {
+      DYNAMODB_TABLE = aws_dynamodb_table.email_tracking.name
+      MAILGUN_API_KEY = var.mailgun_api_key
+      MAILGUN_DOMAIN  = var.mailgun_domain
+      DOMAIN_NAME     = var.domain_name
+    }
+  }
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-email-verification"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# SNS Subscription — delivers messages from signup topic to Lambda
+# ---------------------------------------------------------------------------
+resource "aws_sns_topic_subscription" "lambda_subscription" {
+  topic_arn = aws_sns_topic.user_signup.arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.email_verification.arn
+}
+
+# ---------------------------------------------------------------------------
+# Lambda Permission — allows SNS to invoke the Lambda function
+# ---------------------------------------------------------------------------
+resource "aws_lambda_permission" "sns_invoke" {
+  statement_id  = "AllowSNSInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.email_verification.function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.user_signup.arn
 }
