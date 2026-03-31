@@ -881,3 +881,31 @@ resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = aws_iam_policy.lambda_policy.arn
 }
+
+# ---------------------------------------------------------------------------
+# SNS Publish Policy for EC2 — allows webapp to publish to signup topic
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "webapp_sns_policy" {
+  name        = "${local.name_prefix}-webapp-sns-policy"
+  description = "Allows webapp EC2 instances to publish messages to the SNS signup topic"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = "sns:Publish"
+        Resource = aws_sns_topic.user_signup.arn
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-sns-policy"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "webapp_sns_attachment" {
+  role       = aws_iam_role.webapp_role.name
+  policy_arn = aws_iam_policy.webapp_sns_policy.arn
+}
