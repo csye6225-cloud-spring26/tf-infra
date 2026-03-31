@@ -785,3 +785,32 @@ resource "aws_route53_record" "webapp_a_record" {
     evaluate_target_health = true
   }
 }
+
+# ---------------------------------------------------------------------------
+# DynamoDB Table — tracks sent emails for Lambda deduplication
+# ---------------------------------------------------------------------------
+resource "aws_dynamodb_table" "email_tracking" {
+  name         = "${local.name_prefix}-email-tracking"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "email"
+
+  attribute {
+    name = "email"
+    type = "S"
+  }
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-email-tracking"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# SNS Topic — webapp publishes here on user signup
+# ---------------------------------------------------------------------------
+resource "aws_sns_topic" "user_signup" {
+  name = "${local.name_prefix}-user-signup"
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-user-signup"
+  })
+}
