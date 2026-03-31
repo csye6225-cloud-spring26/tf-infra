@@ -814,3 +814,70 @@ resource "aws_sns_topic" "user_signup" {
     Name = "${local.name_prefix}-user-signup"
   })
 }
+
+# ---------------------------------------------------------------------------
+# IAM Role for Lambda — allows Lambda service to assume this role
+# ---------------------------------------------------------------------------
+resource "aws_iam_role" "lambda_role" {
+  name = "${local.name_prefix}-lambda-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-lambda-role"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Lambda Policy — least privilege: CloudWatch Logs + DynamoDB + SNS
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "lambda_policy" {
+  name        = "${local.name_prefix}-lambda-policy"
+  description = "Allows Lambda to write logs, access DynamoDB for dedup, and receive SNS messages"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Sid    = "DynamoDBAccess"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem"
+        ]
+        Resource = aws_dynamodb_table.email_tracking.arn
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-lambda-policy"
+  })
+}
+
+# Attach the policy to the Lambda role
+resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = aws_iam_policy.lambda_policy.arn
+}
