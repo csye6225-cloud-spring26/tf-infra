@@ -921,7 +921,7 @@ resource "aws_lambda_function" "email_verification" {
   runtime       = "nodejs20.x"
   timeout       = 30
   filename      = var.lambda_zip_path
-
+  source_code_hash = filebase64sha256(var.lambda_zip_path)
   environment {
     variables = {
       DYNAMODB_TABLE = aws_dynamodb_table.email_tracking.name
