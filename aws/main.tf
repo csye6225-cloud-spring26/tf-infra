@@ -894,8 +894,8 @@ resource "aws_iam_policy" "webapp_sns_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = "sns:Publish"
+        Effect   = "Allow"
+        Action   = "sns:Publish"
         Resource = aws_sns_topic.user_signup.arn
       }
     ]
@@ -915,16 +915,16 @@ resource "aws_iam_role_policy_attachment" "webapp_sns_attachment" {
 # Lambda Function — sends verification email on SNS trigger
 # ---------------------------------------------------------------------------
 resource "aws_lambda_function" "email_verification" {
-  function_name = "${local.name_prefix}-email-verification"
-  role          = aws_iam_role.lambda_role.arn
-  handler       = "index.handler"
-  runtime       = "nodejs20.x"
-  timeout       = 30
-  filename      = var.lambda_zip_path
+  function_name    = "${local.name_prefix}-email-verification"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  filename         = var.lambda_zip_path
   source_code_hash = filebase64sha256(var.lambda_zip_path)
   environment {
     variables = {
-      DYNAMODB_TABLE = aws_dynamodb_table.email_tracking.name
+      DYNAMODB_TABLE  = aws_dynamodb_table.email_tracking.name
       MAILGUN_API_KEY = var.mailgun_api_key
       MAILGUN_DOMAIN  = var.mailgun_domain
       DOMAIN_NAME     = var.domain_name
