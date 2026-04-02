@@ -333,6 +333,7 @@ S3_BUCKET_NAME=${aws_s3_bucket.syllabus_bucket.id}
 AWS_REGION=${var.aws_region}
 STATSD_HOST=localhost
 STATSD_PORT=${var.statsd_port}
+SNS_TOPIC_ARN=${aws_sns_topic.user_signup.arn}
 ENVFILE
 
 # -----------------------------------------------
@@ -784,4 +785,173 @@ resource "aws_route53_record" "webapp_a_record" {
     zone_id                = aws_lb.webapp_alb.zone_id
     evaluate_target_health = true
   }
+}
+
+# ---------------------------------------------------------------------------
+# DynamoDB Table — tracks sent emails for Lambda deduplication
+# ---------------------------------------------------------------------------
+resource "aws_dynamodb_table" "email_tracking" {
+  name         = "${local.name_prefix}-email-tracking"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "email"
+
+  attribute {
+    name = "email"
+    type = "S"
+  }
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-email-tracking"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# SNS Topic — webapp publishes here on user signup
+# ---------------------------------------------------------------------------
+resource "aws_sns_topic" "user_signup" {
+  name = "${local.name_prefix}-user-signup"
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-user-signup"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# IAM Role for Lambda — allows Lambda service to assume this role
+# ---------------------------------------------------------------------------
+resource "aws_iam_role" "lambda_role" {
+  name = "${local.name_prefix}-lambda-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-lambda-role"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Lambda Policy — least privilege: CloudWatch Logs + DynamoDB + SNS
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "lambda_policy" {
+  name        = "${local.name_prefix}-lambda-policy"
+  description = "Allows Lambda to write logs, access DynamoDB for dedup, and receive SNS messages"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Sid    = "DynamoDBAccess"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem"
+        ]
+        Resource = aws_dynamodb_table.email_tracking.arn
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-lambda-policy"
+  })
+}
+
+# Attach the policy to the Lambda role
+resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = aws_iam_policy.lambda_policy.arn
+}
+
+# ---------------------------------------------------------------------------
+# SNS Publish Policy for EC2 — allows webapp to publish to signup topic
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "webapp_sns_policy" {
+  name        = "${local.name_prefix}-webapp-sns-policy"
+  description = "Allows webapp EC2 instances to publish messages to the SNS signup topic"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "sns:Publish"
+        Resource = aws_sns_topic.user_signup.arn
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-sns-policy"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "webapp_sns_attachment" {
+  role       = aws_iam_role.webapp_role.name
+  policy_arn = aws_iam_policy.webapp_sns_policy.arn
+}
+
+# ---------------------------------------------------------------------------
+# Lambda Function — sends verification email on SNS trigger
+# ---------------------------------------------------------------------------
+resource "aws_lambda_function" "email_verification" {
+  function_name    = "${local.name_prefix}-email-verification"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  filename         = var.lambda_zip_path
+  source_code_hash = filebase64sha256(var.lambda_zip_path)
+  environment {
+    variables = {
+      DYNAMODB_TABLE  = aws_dynamodb_table.email_tracking.name
+      MAILGUN_API_KEY = var.mailgun_api_key
+      MAILGUN_DOMAIN  = var.mailgun_domain
+      DOMAIN_NAME     = var.domain_name
+    }
+  }
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-email-verification"
+  })
+}
+
+# ---------------------------------------------------------------------------
+# SNS Subscription — delivers messages from signup topic to Lambda
+# ---------------------------------------------------------------------------
+resource "aws_sns_topic_subscription" "lambda_subscription" {
+  topic_arn = aws_sns_topic.user_signup.arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.email_verification.arn
+}
+
+# ---------------------------------------------------------------------------
+# Lambda Permission — allows SNS to invoke the Lambda function
+# ---------------------------------------------------------------------------
+resource "aws_lambda_permission" "sns_invoke" {
+  statement_id  = "AllowSNSInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.email_verification.function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.user_signup.arn
 }

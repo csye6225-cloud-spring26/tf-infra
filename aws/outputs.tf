@@ -121,3 +121,21 @@ output "webapp_iam_role_arn" {
   description = "ARN of the IAM role attached to the webapp EC2 instance."
   value       = aws_iam_role.webapp_role.arn
 }
+
+# ---------------------------------------------------------------------------
+# SNS / Lambda / DynamoDB
+# ---------------------------------------------------------------------------
+output "sns_topic_arn" {
+  description = "ARN of the SNS topic for user signup notifications."
+  value       = aws_sns_topic.user_signup.arn
+}
+
+output "lambda_function_name" {
+  description = "Name of the email verification Lambda function."
+  value       = aws_lambda_function.email_verification.function_name
+}
+
+output "dynamodb_table_name" {
+  description = "Name of the DynamoDB email tracking table."
+  value       = aws_dynamodb_table.email_tracking.name
+}
