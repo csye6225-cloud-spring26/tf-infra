@@ -325,10 +325,21 @@ resource "aws_launch_template" "webapp_lt" {
 set -e
 
 # -----------------------------------------------
+# Fetch DB password from Secrets Manager
+# -----------------------------------------------
+SECRET_JSON=$(aws secretsmanager get-secret-value \
+  --secret-id "${aws_secretsmanager_secret.db_password.name}" \
+  --region "${var.aws_region}" \
+  --query SecretString \
+  --output text)
+
+DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.password')
+
+# -----------------------------------------------
 # Write .env file with RDS and S3 configuration
 # -----------------------------------------------
 cat > /opt/csye6225/.env <<ENVFILE
-DATABASE_URL=postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.csye6225_rds.address}:5432/${var.db_name}
+DATABASE_URL=postgresql://${var.db_username}:$${DB_PASSWORD}@${aws_db_instance.csye6225_rds.address}:5432/${var.db_name}
 PORT=${var.webapp_port}
 NODE_ENV=production
 S3_BUCKET_NAME=${aws_s3_bucket.syllabus_bucket.id}
