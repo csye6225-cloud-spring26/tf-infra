@@ -1088,6 +1088,76 @@ resource "aws_iam_policy" "webapp_sns_policy" {
   })
 }
 
+# ---------------------------------------------------------------------------
+# Secrets Manager policy — allows EC2 to fetch DB password at boot
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "webapp_secrets_policy" {
+  name        = "${local.name_prefix}-webapp-secrets-policy"
+  description = "Allows webapp EC2 instances to read DB password from Secrets Manager"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadSecret"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = aws_secretsmanager_secret.db_password.arn
+      },
+      {
+        Sid    = "DecryptWithKMS"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = aws_kms_key.secrets_key.arn
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-secrets-policy"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "webapp_secrets_attachment" {
+  role       = aws_iam_role.webapp_role.name
+  policy_arn = aws_iam_policy.webapp_secrets_policy.arn
+}
+
+# ---------------------------------------------------------------------------
+# S3 KMS policy — allows EC2 to encrypt/decrypt S3 objects with custom key
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "webapp_s3_kms_policy" {
+  name        = "${local.name_prefix}-webapp-s3-kms-policy"
+  description = "Allows webapp to use KMS key for S3 object encryption"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = aws_kms_key.s3_key.arn
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-s3-kms-policy"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "webapp_s3_kms_attachment" {
+  role       = aws_iam_role.webapp_role.name
+  policy_arn = aws_iam_policy.webapp_s3_kms_policy.arn
+}
+
 resource "aws_iam_role_policy_attachment" "webapp_sns_attachment" {
   role       = aws_iam_role.webapp_role.name
   policy_arn = aws_iam_policy.webapp_sns_policy.arn
