@@ -809,13 +809,15 @@ resource "aws_db_instance" "csye6225_rds" {
   engine_version = var.db_engine_version
   instance_class = var.db_instance_class
 
-  # Credentials
+  # Credentials — now using auto-generated password
   username = var.db_username
-  password = var.db_password
+  password = random_password.db_password.result
 
-  # Storage
+  # Storage — now encrypted with custom KMS key
   allocated_storage = 20
   storage_type      = "gp2"
+  storage_encrypted = true
+  kms_key_id        = aws_kms_key.rds_key.arn
 
   # Networking — private subnet, NOT publicly accessible
   db_subnet_group_name   = aws_db_subnet_group.csye6225_db_subnet_group.name
