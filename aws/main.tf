@@ -315,6 +315,8 @@ resource "aws_launch_template" "webapp_lt" {
       volume_size           = var.webapp_root_volume_size
       volume_type           = "gp2"
       delete_on_termination = true
+      encrypted             = true
+      kms_key_id            = aws_kms_key.ec2_key.arn
     }
   }
 
