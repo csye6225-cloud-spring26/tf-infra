@@ -276,6 +276,47 @@ resource "aws_lb_target_group" "webapp_tg" {
 }
 
 # ---------------------------------------------------------------------------
+# SSL/TLS — ACM Certificate for the environment domain
+# ---------------------------------------------------------------------------
+resource "aws_acm_certificate" "webapp_cert" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-ssl-cert"
+  })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# DNS validation record — proves we own the domain
+resource "aws_route53_record" "cert_validation" {
+  for_each = {
+    for dvo in aws_acm_certificate.webapp_cert.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  zone_id = local.resolved_zone_id
+  name    = each.value.name
+  type    = each.value.type
+  ttl     = 60
+  records = [each.value.record]
+
+  allow_overwrite = true
+}
+
+# Wait for the certificate to be validated
+resource "aws_acm_certificate_validation" "webapp_cert" {
+  certificate_arn         = aws_acm_certificate.webapp_cert.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+}
+
+# ---------------------------------------------------------------------------
 # Listener — HTTP on port 80 → forward to target group
 # ---------------------------------------------------------------------------
 resource "aws_lb_listener" "http" {
