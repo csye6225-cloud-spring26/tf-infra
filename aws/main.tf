@@ -513,6 +513,183 @@ resource "aws_cloudwatch_metric_alarm" "cpu_low" {
   alarm_actions = [aws_autoscaling_policy.scale_down.arn]
 }
 
+
+# ---------------------------------------------------------------------------
+# KMS Keys — customer-managed encryption keys (90-day rotation)
+# ---------------------------------------------------------------------------
+
+# Get current AWS account ID and region for KMS policy
+data "aws_caller_identity" "current" {}
+
+# EC2 / EBS encryption key
+resource "aws_kms_key" "ec2_key" {
+  description             = "KMS key for EC2 EBS volume encryption"
+  rotation_period_in_days = 90
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccountFullAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowAutoScalingServiceLinkedRole"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+        }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey",
+          "kms:CreateGrant"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-ec2-kms-key"
+  })
+}
+
+resource "aws_kms_alias" "ec2_key_alias" {
+  name          = "alias/${local.name_prefix}-ec2"
+  target_key_id = aws_kms_key.ec2_key.key_id
+}
+
+# RDS encryption key
+resource "aws_kms_key" "rds_key" {
+  description             = "KMS key for RDS storage encryption"
+  rotation_period_in_days = 90
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccountFullAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-rds-kms-key"
+  })
+}
+
+resource "aws_kms_alias" "rds_key_alias" {
+  name          = "alias/${local.name_prefix}-rds"
+  target_key_id = aws_kms_key.rds_key.key_id
+}
+
+# S3 encryption key
+resource "aws_kms_key" "s3_key" {
+  description             = "KMS key for S3 bucket encryption"
+  rotation_period_in_days = 90
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccountFullAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-s3-kms-key"
+  })
+}
+
+resource "aws_kms_alias" "s3_key_alias" {
+  name          = "alias/${local.name_prefix}-s3"
+  target_key_id = aws_kms_key.s3_key.key_id
+}
+
+# Secrets Manager encryption key
+resource "aws_kms_key" "secrets_key" {
+  description             = "KMS key for Secrets Manager"
+  rotation_period_in_days = 90
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccountFullAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-secrets-kms-key"
+  })
+}
+
+resource "aws_kms_alias" "secrets_key_alias" {
+  name          = "alias/${local.name_prefix}-secrets"
+  target_key_id = aws_kms_key.secrets_key.key_id
+}
+
+# ---------------------------------------------------------------------------
+# Database Password — auto-generated, stored in Secrets Manager
+# ---------------------------------------------------------------------------
+
+# Generate a random password (no special chars)
+resource "random_password" "db_password" {
+  length           = 24
+  special          = true
+  override_special = "!#$%^&*()-_=+"
+}
+
+# Store the password in Secrets Manager, encrypted with our custom KMS key
+resource "aws_secretsmanager_secret" "db_password" {
+  name       = "${local.name_prefix}-db-password"
+  kms_key_id = aws_kms_key.secrets_key.arn
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-db-password"
+  })
+}
+
+resource "aws_secretsmanager_secret_version" "db_password" {
+  secret_id = aws_secretsmanager_secret.db_password.id
+  secret_string = jsonencode({
+    username = var.db_username
+    password = random_password.db_password.result
+  })
+}
+
 # ---------------------------------------------------------------------------
 # S3 Bucket for Syllabus Files
 # ---------------------------------------------------------------------------
