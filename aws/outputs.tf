@@ -111,7 +111,7 @@ output "s3_bucket_arn" {
 # ---------------------------------------------------------------------------
 output "webapp_url" {
   description = "URL to access the web application."
-  value       = "http://${var.domain_name}"
+  value       = "https://${var.domain_name}"
 }
 
 # ---------------------------------------------------------------------------
