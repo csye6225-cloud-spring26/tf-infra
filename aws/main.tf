@@ -276,19 +276,61 @@ resource "aws_lb_target_group" "webapp_tg" {
 }
 
 # ---------------------------------------------------------------------------
-# Listener — HTTP on port 80 → forward to target group
+# SSL/TLS — ACM Certificate for the environment domain
 # ---------------------------------------------------------------------------
-resource "aws_lb_listener" "http" {
+resource "aws_acm_certificate" "webapp_cert" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-ssl-cert"
+  })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# DNS validation record — proves we own the domain
+resource "aws_route53_record" "cert_validation" {
+  for_each = {
+    for dvo in aws_acm_certificate.webapp_cert.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  zone_id = local.resolved_zone_id
+  name    = each.value.name
+  type    = each.value.type
+  ttl     = 60
+  records = [each.value.record]
+
+  allow_overwrite = true
+}
+
+# Wait for the certificate to be validated
+resource "aws_acm_certificate_validation" "webapp_cert" {
+  certificate_arn         = aws_acm_certificate.webapp_cert.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+}
+
+# ---------------------------------------------------------------------------
+# Listener — HTTPS on port 443 → forward to target group
+# ---------------------------------------------------------------------------
+resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.webapp_alb.arn
-  port              = 80
-  protocol          = "HTTP"
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-2016-08"
+  certificate_arn   = aws_acm_certificate_validation.webapp_cert.certificate_arn
 
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.webapp_tg.arn
   }
 }
-
 
 # ---------------------------------------------------------------------------
 # Launch Template — defines how to launch EC2 instances for the webapp
@@ -315,6 +357,8 @@ resource "aws_launch_template" "webapp_lt" {
       volume_size           = var.webapp_root_volume_size
       volume_type           = "gp2"
       delete_on_termination = true
+      encrypted             = true
+      kms_key_id            = aws_kms_key.ec2_key.arn
     }
   }
 
@@ -323,10 +367,22 @@ resource "aws_launch_template" "webapp_lt" {
 set -e
 
 # -----------------------------------------------
+# Fetch DB password from Secrets Manager
+# -----------------------------------------------
+SECRET_JSON=$(aws secretsmanager get-secret-value \
+  --secret-id "${aws_secretsmanager_secret.db_password.name}" \
+  --region "${var.aws_region}" \
+  --query SecretString \
+  --output text)
+
+# Extract and URL-encode password safely using jq + python3
+ENCODED_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.password' | python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip(), safe=''))")
+
+# -----------------------------------------------
 # Write .env file with RDS and S3 configuration
 # -----------------------------------------------
 cat > /opt/csye6225/.env <<ENVFILE
-DATABASE_URL=postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.csye6225_rds.address}:5432/${var.db_name}
+DATABASE_URL=postgresql://${var.db_username}:$${ENCODED_PASSWORD}@${aws_db_instance.csye6225_rds.address}:5432/${var.db_name}
 PORT=${var.webapp_port}
 NODE_ENV=production
 S3_BUCKET_NAME=${aws_s3_bucket.syllabus_bucket.id}
@@ -513,6 +569,183 @@ resource "aws_cloudwatch_metric_alarm" "cpu_low" {
   alarm_actions = [aws_autoscaling_policy.scale_down.arn]
 }
 
+
+# ---------------------------------------------------------------------------
+# KMS Keys — customer-managed encryption keys (90-day rotation)
+# ---------------------------------------------------------------------------
+
+# Get current AWS account ID and region for KMS policy
+data "aws_caller_identity" "current" {}
+
+# EC2 / EBS encryption key
+resource "aws_kms_key" "ec2_key" {
+  description             = "KMS key for EC2 EBS volume encryption"
+  rotation_period_in_days = 90
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccountFullAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowAutoScalingServiceLinkedRole"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+        }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey",
+          "kms:CreateGrant"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-ec2-kms-key"
+  })
+}
+
+resource "aws_kms_alias" "ec2_key_alias" {
+  name          = "alias/${local.name_prefix}-ec2"
+  target_key_id = aws_kms_key.ec2_key.key_id
+}
+
+# RDS encryption key
+resource "aws_kms_key" "rds_key" {
+  description             = "KMS key for RDS storage encryption"
+  rotation_period_in_days = 90
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccountFullAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-rds-kms-key"
+  })
+}
+
+resource "aws_kms_alias" "rds_key_alias" {
+  name          = "alias/${local.name_prefix}-rds"
+  target_key_id = aws_kms_key.rds_key.key_id
+}
+
+# S3 encryption key
+resource "aws_kms_key" "s3_key" {
+  description             = "KMS key for S3 bucket encryption"
+  rotation_period_in_days = 90
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccountFullAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-s3-kms-key"
+  })
+}
+
+resource "aws_kms_alias" "s3_key_alias" {
+  name          = "alias/${local.name_prefix}-s3"
+  target_key_id = aws_kms_key.s3_key.key_id
+}
+
+# Secrets Manager encryption key
+resource "aws_kms_key" "secrets_key" {
+  description             = "KMS key for Secrets Manager"
+  rotation_period_in_days = 90
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccountFullAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-secrets-kms-key"
+  })
+}
+
+resource "aws_kms_alias" "secrets_key_alias" {
+  name          = "alias/${local.name_prefix}-secrets"
+  target_key_id = aws_kms_key.secrets_key.key_id
+}
+
+# ---------------------------------------------------------------------------
+# Database Password — auto-generated, stored in Secrets Manager
+# ---------------------------------------------------------------------------
+
+# Generate a random password (no special chars)
+resource "random_password" "db_password" {
+  length           = 24
+  special          = true
+  override_special = "!#$%^&*()-_=+"
+}
+
+# Store the password in Secrets Manager, encrypted with our custom KMS key
+resource "aws_secretsmanager_secret" "db_password" {
+  name       = "${local.name_prefix}-db-password"
+  kms_key_id = aws_kms_key.secrets_key.arn
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-db-password"
+  })
+}
+
+resource "aws_secretsmanager_secret_version" "db_password" {
+  secret_id = aws_secretsmanager_secret.db_password.id
+  secret_string = jsonencode({
+    username = var.db_username
+    password = random_password.db_password.result
+  })
+}
+
 # ---------------------------------------------------------------------------
 # S3 Bucket for Syllabus Files
 # ---------------------------------------------------------------------------
@@ -546,7 +779,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "syllabus_bucket_e
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.s3_key.arn
     }
   }
 }
@@ -632,13 +866,15 @@ resource "aws_db_instance" "csye6225_rds" {
   engine_version = var.db_engine_version
   instance_class = var.db_instance_class
 
-  # Credentials
+  # Credentials — now using auto-generated password
   username = var.db_username
-  password = var.db_password
+  password = random_password.db_password.result
 
-  # Storage
+  # Storage — now encrypted with custom KMS key
   allocated_storage = 20
   storage_type      = "gp2"
+  storage_encrypted = true
+  kms_key_id        = aws_kms_key.rds_key.arn
 
   # Networking — private subnet, NOT publicly accessible
   db_subnet_group_name   = aws_db_subnet_group.csye6225_db_subnet_group.name
@@ -904,6 +1140,76 @@ resource "aws_iam_policy" "webapp_sns_policy" {
   tags = merge(var.tags, {
     Name = "${local.name_prefix}-webapp-sns-policy"
   })
+}
+
+# ---------------------------------------------------------------------------
+# Secrets Manager policy — allows EC2 to fetch DB password at boot
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "webapp_secrets_policy" {
+  name        = "${local.name_prefix}-webapp-secrets-policy"
+  description = "Allows webapp EC2 instances to read DB password from Secrets Manager"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ReadSecret"
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = aws_secretsmanager_secret.db_password.arn
+      },
+      {
+        Sid    = "DecryptWithKMS"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = aws_kms_key.secrets_key.arn
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-secrets-policy"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "webapp_secrets_attachment" {
+  role       = aws_iam_role.webapp_role.name
+  policy_arn = aws_iam_policy.webapp_secrets_policy.arn
+}
+
+# ---------------------------------------------------------------------------
+# S3 KMS policy — allows EC2 to encrypt/decrypt S3 objects with custom key
+# ---------------------------------------------------------------------------
+resource "aws_iam_policy" "webapp_s3_kms_policy" {
+  name        = "${local.name_prefix}-webapp-s3-kms-policy"
+  description = "Allows webapp to use KMS key for S3 object encryption"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = aws_kms_key.s3_key.arn
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${local.name_prefix}-webapp-s3-kms-policy"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "webapp_s3_kms_attachment" {
+  role       = aws_iam_role.webapp_role.name
+  policy_arn = aws_iam_policy.webapp_s3_kms_policy.arn
 }
 
 resource "aws_iam_role_policy_attachment" "webapp_sns_attachment" {

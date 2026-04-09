@@ -130,12 +130,6 @@ variable "db_username" {
   default     = "csye6225"
 }
 
-variable "db_password" {
-  description = "Master password for the RDS instance."
-  type        = string
-  sensitive   = true
-}
-
 # ---------------------------------------------------------------------------
 # DNS / Route 53 variables
 # ---------------------------------------------------------------------------
