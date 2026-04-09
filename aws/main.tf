@@ -375,13 +375,14 @@ SECRET_JSON=$(aws secretsmanager get-secret-value \
   --query SecretString \
   --output text)
 
-DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.password')
+# Extract and URL-encode password safely using jq + python3
+ENCODED_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.password' | python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip(), safe=''))")
 
 # -----------------------------------------------
 # Write .env file with RDS and S3 configuration
 # -----------------------------------------------
 cat > /opt/csye6225/.env <<ENVFILE
-DATABASE_URL=postgresql://${var.db_username}:$${DB_PASSWORD}@${aws_db_instance.csye6225_rds.address}:5432/${var.db_name}
+DATABASE_URL=postgresql://${var.db_username}:$${ENCODED_PASSWORD}@${aws_db_instance.csye6225_rds.address}:5432/${var.db_name}
 PORT=${var.webapp_port}
 NODE_ENV=production
 S3_BUCKET_NAME=${aws_s3_bucket.syllabus_bucket.id}
